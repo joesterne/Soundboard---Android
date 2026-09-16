@@ -2,6 +2,7 @@ package com.example.data
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.Delete
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
@@ -22,4 +23,16 @@ interface SoundboardDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun updateSettings(settings: AppSettings)
+
+    @Query("SELECT * FROM favorites ORDER BY name ASC")
+    fun getAllFavorites(): Flow<List<FavoriteTile>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFavorite(favorite: FavoriteTile)
+
+    @Delete
+    suspend fun deleteFavorite(favorite: FavoriteTile)
+
+    @Query("DELETE FROM tiles")
+    suspend fun deleteAllTiles()
 }

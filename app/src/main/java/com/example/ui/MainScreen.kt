@@ -33,6 +33,7 @@ import java.io.File
 import androidx.compose.ui.graphics.toArgb
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.launch
 
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as lazyColumnItems
@@ -49,10 +50,13 @@ fun MainScreen(viewModel: SoundboardViewModel) {
     val isRecording by viewModel.isRecording.collectAsStateWithLifecycle()
     val playHistory by viewModel.playHistory.collectAsStateWithLifecycle()
     val presets by viewModel.presets.collectAsStateWithLifecycle()
+    val favorites by viewModel.favorites.collectAsStateWithLifecycle()
 
     var showSettings by remember { mutableStateOf(false) }
     var showHistorySheet by remember { mutableStateOf(false) }
     var showPresetsSheet by remember { mutableStateOf(false) }
+    var showWebSearch by remember { mutableStateOf(false) }
+    var showFavoritesSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val context = LocalContext.current
     val view = LocalView.current
@@ -86,47 +90,77 @@ fun MainScreen(viewModel: SoundboardViewModel) {
         }
     }
 
-    var showAddMenu by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val coroutineScope = rememberCoroutineScope()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Soundboard", fontWeight = FontWeight.Bold) },
-                actions = {
-                    Box {
-                        IconButton(onClick = { showAddMenu = true }) {
-                            Icon(Icons.Filled.Add, contentDescription = "Add Sounds")
-                        }
-                        DropdownMenu(
-                            expanded = showAddMenu,
-                            onDismissRequest = { showAddMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Bulk Import Local Sounds") },
-                                onClick = {
-                                    showAddMenu = false
-                                    bulkImportLauncher.launch("audio/*")
-                                },
-                                leadingIcon = { Icon(Icons.Filled.LibraryMusic, contentDescription = null) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Search Web for Sounds") },
-                                onClick = {
-                                    showAddMenu = false
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://pixabay.com/sound-effects/"))
-                                    context.startActivity(intent)
-                                },
-                                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) }
-                            )
-                        }
-                    }
-                    IconButton(onClick = { showPresetsSheet = true }) {
-                        Icon(Icons.Filled.CollectionsBookmark, contentDescription = "Preset Library")
-                    }
-                    IconButton(onClick = { showHistorySheet = true }) {
-                        Icon(Icons.Filled.History, contentDescription = "Recent Sounds")
-                    }
-                    IconButton(onClick = {
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(modifier = Modifier.width(300.dp)) {
+                Text(
+                    text = "Soundboard Menu",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                HorizontalDivider()
+                
+                NavigationDrawerItem(
+                    label = { Text("Bulk Import Local Sounds") },
+                    icon = { Icon(Icons.Filled.LibraryMusic, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        bulkImportLauncher.launch("audio/*")
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text("Search Web for Sounds") },
+                    icon = { Icon(Icons.Filled.Search, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        showWebSearch = true
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text("Preset Library") },
+                    icon = { Icon(Icons.Filled.CollectionsBookmark, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        showPresetsSheet = true
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text("Recent Sounds") },
+                    icon = { Icon(Icons.Filled.History, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        showHistorySheet = true
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text("Favorites") },
+                    icon = { Icon(Icons.Filled.Star, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        showFavoritesSheet = true
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text("Share Soundboard") },
+                    icon = { Icon(Icons.Filled.Share, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
                         val tempFile = File(context.cacheDir, "share_board.zip")
                         if (viewModel.exportBoard(tempFile)) {
                             val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", tempFile)
@@ -137,26 +171,63 @@ fun MainScreen(viewModel: SoundboardViewModel) {
                             }
                             context.startActivity(Intent.createChooser(intent, "Share Soundboard"))
                         }
-                    }) {
-                        Icon(Icons.Filled.Share, contentDescription = "Share")
-                    }
-                    IconButton(onClick = { exportLauncher.launch("soundboard.zip") }) {
-                        Icon(Icons.Filled.Download, contentDescription = "Export")
-                    }
-                    IconButton(onClick = { importLauncher.launch(arrayOf("application/zip")) }) {
-                        Icon(Icons.Filled.Upload, contentDescription = "Import")
-                    }
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(settings.backgroundColor).copy(alpha = 0.5f)
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                 )
-            )
-        },
-        containerColor = Color.Transparent
-    ) { padding ->
+                NavigationDrawerItem(
+                    label = { Text("Export Board") },
+                    icon = { Icon(Icons.Filled.Download, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        exportLauncher.launch("soundboard.zip")
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text("Import Board") },
+                    icon = { Icon(Icons.Filled.Upload, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        importLauncher.launch(arrayOf("application/zip"))
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text("Settings") },
+                    icon = { Icon(Icons.Filled.Settings, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        showSettings = true
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
+        }
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Soundboard", fontWeight = FontWeight.Bold) },
+                    navigationIcon = {
+                        IconButton(onClick = { coroutineScope.launch { drawerState.open() } }) {
+                            Icon(Icons.Filled.Menu, contentDescription = "Menu")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { viewModel.autoArrangeTiles() }) {
+                            Icon(androidx.compose.material.icons.Icons.Filled.Sort, contentDescription = "Auto-Arrange")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color(settings.backgroundColor).copy(alpha = 0.5f)
+                    )
+                )
+            },
+            containerColor = Color.Transparent
+        ) { padding ->
         Box(modifier = Modifier.fillMaxSize().background(Color(settings.backgroundColor))) {
             if (settings.backgroundPhotoPath != null) {
                 AsyncImage(
@@ -170,7 +241,7 @@ fun MainScreen(viewModel: SoundboardViewModel) {
                 // Setup default if empty
                 LaunchedEffect(tiles.size) {
                 if (tiles.isEmpty()) {
-                    viewModel.updateSettings(4, 4, settings.backgroundColor, settings.fontSizeSp)
+                    viewModel.updateSettings(4, 4, settings.backgroundColor, settings.fontSizeSp, settings.masterVolume)
                 }
             }
 
@@ -182,7 +253,10 @@ fun MainScreen(viewModel: SoundboardViewModel) {
                 modifier = Modifier.fillMaxSize()
             ) {
                 val displayTiles = tiles.filter { it.index < settings.rows * settings.cols }.sortedBy { it.index }
-                items(displayTiles) { tile ->
+                items(
+                    items = displayTiles,
+                    key = { it.index }
+                ) { tile ->
                     TileItem(
                         tile = tile,
                         fontSizeSp = settings.fontSizeSp,
@@ -214,18 +288,25 @@ fun MainScreen(viewModel: SoundboardViewModel) {
         }
     }
     }
+    }
 
     if (showSettings) {
         SettingsDialog(
             settings = settings,
             onDismiss = { showSettings = false },
-            onSave = { r, c, bg, fontSize -> 
-                viewModel.updateSettings(r, c, bg, fontSize)
+            onSave = { r, c, bg, fontSize, masterVol -> 
+                viewModel.updateSettings(r, c, bg, fontSize, masterVol)
                 showSettings = false
             },
             onBackgroundPhotoSelected = { uri ->
                 viewModel.updateBackgroundPhoto(uri)
             }
+        )
+    }
+
+    if (showWebSearch) {
+        WebSearchDialog(
+            onDismiss = { showWebSearch = false }
         )
     }
 
@@ -273,7 +354,10 @@ fun MainScreen(viewModel: SoundboardViewModel) {
                     Text("No presets saved yet.", modifier = Modifier.padding(vertical = 32.dp))
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                        lazyColumnItems(presets) { preset ->
+                        lazyColumnItems(
+                            items = presets,
+                            key = { it.id }
+                        ) { preset ->
                             Card(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 onClick = {
@@ -330,7 +414,10 @@ fun MainScreen(viewModel: SoundboardViewModel) {
                     Text("No sounds played yet.", modifier = Modifier.padding(vertical = 32.dp))
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                        lazyColumnItems(playHistory) { tile ->
+                        lazyColumnItems(
+                            items = playHistory,
+                            key = { it.index }
+                        ) { tile ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -364,12 +451,70 @@ fun MainScreen(viewModel: SoundboardViewModel) {
         }
     }
 
+    if (showFavoritesSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showFavoritesSheet = false },
+            sheetState = sheetState
+        ) {
+            Column(modifier = Modifier.padding(16.dp).fillMaxHeight(0.9f)) {
+                Text(
+                    text = "Favorites",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                if (favorites.isEmpty()) {
+                    Text("No pinned sounds yet. Edit a tile to favorite it.", modifier = Modifier.padding(vertical = 32.dp))
+                } else {
+                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                        lazyColumnItems(
+                            items = favorites,
+                            key = { it.id }
+                        ) { fav ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                        viewModel.playFavorite(fav)
+                                    }
+                                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(fav.color))
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(
+                                    text = fav.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.weight(1f))
+                                IconButton(onClick = { viewModel.removeFavorite(fav) }) {
+                                    Icon(Icons.Filled.Star, contentDescription = "Unfavorite", tint = Color(0xFFFFC107))
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     currentlyEditingTile?.let { tile ->
+        val isFavorite = favorites.any { it.audioPath == tile.audioPath && it.audioPath != null }
         TileEditDialog(
             tile = tile,
             isRecording = isRecording,
+            isFavorite = isFavorite,
             onDismiss = { viewModel.cancelEditing() },
             onSave = { updated -> viewModel.saveTile(updated) },
+            onToggleFavorite = { viewModel.toggleFavorite(tile) },
             onRecordStart = { viewModel.startRecording(tile.index) },
             onRecordStop = { viewModel.stopRecording(tile) },
             onImportAudio = { uri -> viewModel.importAudioFromUri(tile, uri) }

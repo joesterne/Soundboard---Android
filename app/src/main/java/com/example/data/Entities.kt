@@ -12,7 +12,9 @@ data class SoundTile(
     val volume: Float = 1.0f,
     val isLooping: Boolean = false,
     val trimStartMs: Long? = null,
-    val trimEndMs: Long? = null
+    val trimEndMs: Long? = null,
+    val playCount: Int = 0,
+    val category: String = ""
 )
 
 @Entity(tableName = "settings")
@@ -22,5 +24,18 @@ data class AppSettings(
     val cols: Int = 4,
     val backgroundColor: Int = 0xFF121212.toInt(),
     val fontSizeSp: Float = 14f,
-    val backgroundPhotoPath: String? = null
+    val backgroundPhotoPath: String? = null,
+    val masterVolume: Float = 1.0f
+)
+
+@Entity(tableName = "favorites")
+data class FavoriteTile(
+    @PrimaryKey val id: String,
+    val name: String,
+    val color: Int, // ARGB
+    val audioPath: String?, // path to local file, null if empty
+    val volume: Float = 1.0f,
+    val isLooping: Boolean = false,
+    val trimStartMs: Long? = null,
+    val trimEndMs: Long? = null
 )

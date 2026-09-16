@@ -19,6 +19,8 @@ import androidx.compose.ui.unit.sp
 import com.example.data.SoundTile
 import androidx.compose.foundation.ExperimentalFoundationApi
 
+import androidx.compose.runtime.remember
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TileItem(
@@ -29,6 +31,11 @@ fun TileItem(
     onLongPress: () -> Unit,
     onDoubleTap: () -> Unit
 ) {
+    val isLight = remember(tile.color) {
+        val c = Color(tile.color)
+        (0.299f * c.red + 0.587f * c.green + 0.114f * c.blue) > 0.5f
+    }
+    
     Box(
         modifier = Modifier
             .padding(4.dp)
@@ -50,7 +57,7 @@ fun TileItem(
     ) {
         Text(
             text = tile.name,
-            color = if (Color(tile.color).luminance() > 0.5f) Color.Black else Color.White,
+            color = if (isLight) Color.Black else Color.White,
             fontWeight = FontWeight.Bold,
             fontSize = fontSizeSp.sp,
             textAlign = TextAlign.Center,
@@ -58,9 +65,4 @@ fun TileItem(
             overflow = TextOverflow.Ellipsis
         )
     }
-}
-
-// Simple luminance calculation
-fun Color.luminance(): Float {
-    return 0.299f * red + 0.587f * green + 0.114f * blue
 }

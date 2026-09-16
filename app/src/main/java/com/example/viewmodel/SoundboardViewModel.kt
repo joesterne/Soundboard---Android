@@ -9,6 +9,7 @@ import com.example.audio.AudioRecorder
 import com.example.data.AppDatabase
 import com.example.data.AppSettings
 import com.example.data.SoundTile
+import com.example.data.FavoriteTile
 import com.example.data.Preset
 import com.example.data.SoundboardRepository
 import com.example.utils.ExportImportUtils
@@ -16,9 +17,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.UUID
 
 class SoundboardViewModel(application: Application) : AndroidViewModel(application) {
     private val db = androidx.room.Room.databaseBuilder(
@@ -34,6 +37,20 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
         
     val tiles: StateFlow<List<SoundTile>> = repository.allTiles
+        .onEach { tileList ->
+            // Preload audio into SoundPool proactively to eliminate play latency
+            tileList.forEach { tile ->
+                tile.audioPath?.let { audioEngine.loadSound(it) }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val favorites: StateFlow<List<FavoriteTile>> = repository.allFavorites
+        .onEach { favList ->
+            favList.forEach { fav ->
+                fav.audioPath?.let { audioEngine.loadSound(it) }
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val isRecording = MutableStateFlow(false)
@@ -98,15 +115,68 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
         loadPresets()
     }
 
+    fun playFavorite(favorite: FavoriteTile) {
+        favorite.audioPath?.let { path ->
+            // We use hashCode of the path as a pseudo-ID for the audio engine for favorites
+            val fakeId = 1000 + path.hashCode().rem(1000)
+            if (favorite.isLooping && audioEngine.isLoopingActive(fakeId)) {
+                audioEngine.stopSound(fakeId)
+            } else {
+                val masterVol = settings.value.masterVolume
+                audioEngine.playSound(
+                    id = fakeId,
+                    path = path,
+                    volume = favorite.volume * masterVol,
+                    isLooping = favorite.isLooping,
+                    trimStartMs = favorite.trimStartMs,
+                    trimEndMs = favorite.trimEndMs
+                )
+            }
+        }
+    }
+
+    fun toggleFavorite(tile: SoundTile) {
+        viewModelScope.launch {
+            val currentFavs = favorites.value
+            val existing = currentFavs.find { it.audioPath == tile.audioPath && it.audioPath != null }
+            if (existing != null) {
+                repository.removeFavorite(existing)
+            } else {
+                if (tile.audioPath != null) {
+                    // Copy audio file to ensure it's not overwritten/lost?
+                    // Audio files are in filesDir with timestamp, so they persist until explicitly deleted.
+                    val newFav = FavoriteTile(
+                        id = UUID.randomUUID().toString(),
+                        name = tile.name,
+                        color = tile.color,
+                        audioPath = tile.audioPath,
+                        volume = tile.volume,
+                        isLooping = tile.isLooping,
+                        trimStartMs = tile.trimStartMs,
+                        trimEndMs = tile.trimEndMs
+                    )
+                    repository.addFavorite(newFav)
+                }
+            }
+        }
+    }
+
+    fun removeFavorite(favorite: FavoriteTile) {
+        viewModelScope.launch {
+            repository.removeFavorite(favorite)
+        }
+    }
+
     fun playTile(tile: SoundTile) {
         tile.audioPath?.let { path ->
             if (tile.isLooping && audioEngine.isLoopingActive(tile.index)) {
                 audioEngine.stopSound(tile.index)
             } else {
+                val masterVol = settings.value.masterVolume
                 audioEngine.playSound(
                     id = tile.index,
                     path = path, 
-                    volume = tile.volume, 
+                    volume = tile.volume * masterVol, 
                     isLooping = tile.isLooping,
                     trimStartMs = tile.trimStartMs,
                     trimEndMs = tile.trimEndMs
@@ -116,21 +186,27 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
                 newHistory.removeAll { it.index == tile.index } // Remove duplicate if it was played recently
                 newHistory.add(0, tile)
                 if (newHistory.size > 20) {
-                    newHistory.removeLast()
+                    newHistory.removeAt(newHistory.lastIndex)
                 }
                 _playHistory.value = newHistory
+                
+                // Increment playCount
+                viewModelScope.launch {
+                    repository.updateTile(tile.copy(playCount = tile.playCount + 1))
+                }
             }
         }
     }
 
-    fun updateSettings(rows: Int, cols: Int, bgColor: Int, fontSizeSp: Float) {
+    fun updateSettings(rows: Int, cols: Int, bgColor: Int, fontSizeSp: Float, masterVolume: Float) {
         viewModelScope.launch {
             val current = settings.value
             repository.updateSettings(current.copy(
                 rows = rows, 
                 cols = cols, 
                 backgroundColor = bgColor, 
-                fontSizeSp = fontSizeSp
+                fontSizeSp = fontSizeSp,
+                masterVolume = masterVolume
             ))
             
             // Initialize missing tiles if grid size changed
@@ -189,6 +265,30 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
 
     fun cancelEditing() {
         currentlyEditingTile.value = null
+    }
+
+    fun autoArrangeTiles() {
+        viewModelScope.launch {
+            val currentTiles = tiles.value.toMutableList()
+            if (currentTiles.isEmpty()) return@launch
+
+            // Sort tiles by playCount descending, then alphabetically, but empty tiles (audioPath == null) go last
+            val sortedContents = currentTiles.sortedWith(
+                compareBy<SoundTile> { it.audioPath == null } // true (empty) is sorted after false (has audio)
+                    .thenByDescending { it.playCount }
+                    .thenBy { it.name }
+            )
+
+            // Re-assign indices while keeping the contents sorted
+            val updatedTiles = sortedContents.mapIndexed { i, tile ->
+                // The indices are supposed to match the grid positions. 
+                // Grid has size settings.rows * settings.cols
+                tile.copy(index = i)
+            }
+            
+            // Delete old tiles and insert new ones
+            repository.replaceTiles(updatedTiles)
+        }
     }
     
     fun swapTiles(index1: Int, index2: Int) {

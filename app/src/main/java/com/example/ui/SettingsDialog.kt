@@ -21,13 +21,14 @@ import com.example.data.AppSettings
 fun SettingsDialog(
     settings: AppSettings,
     onDismiss: () -> Unit,
-    onSave: (Int, Int, Int, Float) -> Unit,
+    onSave: (Int, Int, Int, Float, Float) -> Unit,
     onBackgroundPhotoSelected: (android.net.Uri?) -> Unit
 ) {
     var rows by remember { mutableIntStateOf(settings.rows) }
     var cols by remember { mutableIntStateOf(settings.cols) }
     var bgColor by remember { mutableIntStateOf(settings.backgroundColor) }
     var fontSizeSp by remember { mutableFloatStateOf(settings.fontSizeSp) }
+    var masterVolume by remember { mutableFloatStateOf(settings.masterVolume) }
 
     val bgColors = listOf(
         0xFF121212.toInt(), 0xFF1E1E1E.toInt(), 0xFF2C3E50.toInt(),
@@ -77,6 +78,16 @@ fun SettingsDialog(
                     )
                 }
                 
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                    Text("Master Volume (${(masterVolume * 100).toInt()}%)")
+                    Slider(
+                        value = masterVolume,
+                        onValueChange = { masterVolume = it },
+                        valueRange = 0f..1f,
+                        modifier = Modifier.width(150.dp)
+                    )
+                }
+                
                 Text("Background Color")
                 Row(horizontalArrangement = Arrangement.SpaceEvenly, modifier = Modifier.fillMaxWidth()) {
                     bgColors.forEach { c ->
@@ -110,7 +121,7 @@ fun SettingsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(rows, cols, bgColor, fontSizeSp) }) { Text("Save") }
+            TextButton(onClick = { onSave(rows, cols, bgColor, fontSizeSp, masterVolume) }) { Text("Save") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

@@ -12,6 +12,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarOutline
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,8 +32,10 @@ import kotlinx.coroutines.Dispatchers
 fun TileEditDialog(
     tile: SoundTile,
     isRecording: Boolean,
+    isFavorite: Boolean,
     onDismiss: () -> Unit,
     onSave: (SoundTile) -> Unit,
+    onToggleFavorite: () -> Unit,
     onRecordStart: () -> Unit,
     onRecordStop: () -> Unit,
     onImportAudio: (Uri) -> Unit
@@ -88,7 +92,20 @@ fun TileEditDialog(
 
     AlertDialog(
         onDismissRequest = { if (!isRecording) onDismiss() },
-        title = { Text("Edit Tile ${tile.index + 1}") },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text("Edit Tile ${tile.index + 1}", modifier = Modifier.weight(1f))
+                if (tile.audioPath != null) {
+                    IconButton(onClick = onToggleFavorite) {
+                        Icon(
+                            imageVector = if (isFavorite) Icons.Filled.Star else Icons.Filled.StarOutline,
+                            contentDescription = "Toggle Favorite",
+                            tint = if (isFavorite) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 OutlinedTextField(
