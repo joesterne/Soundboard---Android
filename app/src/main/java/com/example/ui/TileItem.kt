@@ -64,5 +64,22 @@ fun TileItem(
             maxLines = 3,
             overflow = TextOverflow.Ellipsis
         )
+
+        if (tile.playbackSpeed != 1.0f) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .padding(horizontal = 4.dp, vertical = 1.dp)
+            ) {
+                Text(
+                    text = "${String.format(java.util.Locale.US, "%.1f", tile.playbackSpeed)}x",
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
     }
 }

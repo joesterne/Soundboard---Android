@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,6 +40,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as lazyColumnItems
 
 import android.view.HapticFeedbackConstants
+import android.widget.Toast
 import androidx.compose.ui.platform.LocalView
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,6 +53,15 @@ fun MainScreen(viewModel: SoundboardViewModel) {
     val playHistory by viewModel.playHistory.collectAsStateWithLifecycle()
     val presets by viewModel.presets.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
+    val toastMessage by viewModel.toastMessage.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    LaunchedEffect(toastMessage) {
+        toastMessage?.let { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            viewModel.clearToastMessage()
+        }
+    }
 
     var showSettings by remember { mutableStateOf(false) }
     var showHistorySheet by remember { mutableStateOf(false) }
@@ -58,19 +69,25 @@ fun MainScreen(viewModel: SoundboardViewModel) {
     var showWebSearch by remember { mutableStateOf(false) }
     var showFavoritesSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
-    val context = LocalContext.current
     val view = LocalView.current
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
         uri?.let { destUri ->
-            // In a real app we'd copy the exported zip from app cache to destUri
-            val tempFile = File(context.cacheDir, "export.zip")
-            viewModel.exportBoard(tempFile)
-            context.contentResolver.openOutputStream(destUri)?.use { out ->
-                tempFile.inputStream().use { input ->
-                    input.copyTo(out)
+            val exportDir = File(context.cacheDir, "shared").apply { mkdirs() }
+            val tempFile = File(exportDir, "export_${System.currentTimeMillis()}.zip")
+            if (viewModel.exportBoard(tempFile)) {
+                try {
+                    context.contentResolver.openOutputStream(destUri)?.use { out ->
+                        tempFile.inputStream().use { input ->
+                            input.copyTo(out)
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    if (tempFile.exists()) tempFile.delete()
                 }
             }
         }
@@ -161,7 +178,9 @@ fun MainScreen(viewModel: SoundboardViewModel) {
                     selected = false,
                     onClick = {
                         coroutineScope.launch { drawerState.close() }
-                        val tempFile = File(context.cacheDir, "share_board.zip")
+                        val sharedDir = File(context.cacheDir, "shared").apply { mkdirs() }
+                        sharedDir.listFiles()?.forEach { it.delete() }
+                        val tempFile = File(sharedDir, "soundboard_share.zip")
                         if (viewModel.exportBoard(tempFile)) {
                             val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", tempFile)
                             val intent = Intent(Intent.ACTION_SEND).apply {
@@ -217,8 +236,13 @@ fun MainScreen(viewModel: SoundboardViewModel) {
                         }
                     },
                     actions = {
+                        IconButton(
+                            onClick = { bulkImportLauncher.launch("audio/*") }
+                        ) {
+                            Icon(Icons.Filled.LibraryAdd, contentDescription = "Batch Import Sounds")
+                        }
                         IconButton(onClick = { viewModel.autoArrangeTiles() }) {
-                            Icon(androidx.compose.material.icons.Icons.Filled.Sort, contentDescription = "Auto-Arrange")
+                            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Auto-Arrange")
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(

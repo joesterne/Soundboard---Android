@@ -7,7 +7,9 @@ A highly customizable and intelligent soundboard application built with Android,
 ### 🎛️ Dynamic Audio Grid
 *   **Customizable Layout:** Adjust the grid dimensions (rows and columns) to fit as many or as few sounds as you need.
 *   **Audio Import & Recording:** Import existing audio files directly or record new sounds on the fly using your device's microphone.
+*   **Batch Import:** Select multiple audio files at once from device storage with automatic board capacity expansion to populate empty grid tiles simultaneously.
 *   **Per-Tile Customization:** Assign custom colors, names, and relative volumes to each individual sound tile.
+*   **Tempo & Playback Speed:** Fine-tune audio playback speed per tile from 0.5x up to 2.0x with live preview and badging for custom tempos.
 *   **Advanced Playback Controls:** Trim your audio clips directly in the app and set sounds to loop continuously.
 
 ### 🌟 Favorites System
@@ -36,6 +38,9 @@ A highly customizable and intelligent soundboard application built with Android,
 *   **Audio Pipeline:** Native `SoundPool` for low-latency playback, coupled with `MediaPlayer` for advanced playback controls (looping, trimming, and precise volume adjustment).
 
 ## Usage
-*   **Long-Press** a tile to open its edit menu (assign audio, trim, color, loop, favorite).
-*   **Tap** the sort icon in the top right to Auto-Arrange.
-*   **Swipe** to open the side drawer to access Favorites, Settings, and Presets.
+*   **Tap** any configured tile to play its audio with haptic feedback.
+*   **Double-Tap** any two tiles in succession to instantly swap their positions.
+*   **Long-Press** a tile to open its edit dialog (sound assignment, playback speed slider, volume, trim range, color, looping, and favoriting).
+*   **Batch Import**: Tap the `LibraryAdd` icon in the top app bar or open the drawer menu to bulk import multiple audio files at once.
+*   **Auto-Arrange**: Tap the sort icon in the top right to organize tiles by usage frequency and alphabetical name.
+*   **Side Drawer**: Swipe from the left or tap the menu icon to access Favorites, Presets, Web Sound Search, and Board Settings.

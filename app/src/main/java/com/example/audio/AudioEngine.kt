@@ -3,6 +3,7 @@ package com.example.audio
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.PlaybackParams
 import android.media.SoundPool
 import android.media.audiofx.LoudnessEnhancer
 import android.os.Handler
@@ -16,7 +17,10 @@ class AudioEngine(private val context: Context) {
     
     private val activeMediaPlayers = mutableMapOf<Int, MediaPlayer>()
     private val stopRunnables = mutableMapOf<Int, Runnable>()
+    private val fadeOutRunnables = mutableMapOf<Int, Runnable>()
     private val activeEnhancers = mutableMapOf<Int, LoudnessEnhancer>()
+    private val activeAnimators = mutableMapOf<Int, MutableList<android.animation.ValueAnimator>>()
+
     private val handler = Handler(Looper.getMainLooper())
 
     init {
@@ -32,9 +36,14 @@ class AudioEngine(private val context: Context) {
     }
 
     fun loadSound(path: String) {
-        if (!soundMap.containsKey(path) && File(path).exists()) {
-            val soundId = soundPool.load(path, 1)
-            soundMap[path] = soundId
+        val file = File(path)
+        if (!soundMap.containsKey(path) && file.exists() && file.isFile && file.canRead()) {
+            try {
+                val soundId = soundPool.load(path, 1)
+                soundMap[path] = soundId
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -44,12 +53,20 @@ class AudioEngine(private val context: Context) {
         volume: Float = 1.0f, 
         isLooping: Boolean = false,
         trimStartMs: Long? = null,
-        trimEndMs: Long? = null
+        trimEndMs: Long? = null,
+        fadeInMs: Long = 0L,
+        fadeOutMs: Long = 0L,
+        playbackSpeed: Float = 1.0f
     ) {
         stopSound(id)
 
-        if (trimStartMs != null || trimEndMs != null || volume > 1.0f) {
-            playWithMediaPlayer(id, path, volume, isLooping, trimStartMs, trimEndMs)
+        val file = File(path)
+        if (!file.exists() || !file.isFile || !file.canRead()) return
+        val safeVolume = volume.coerceIn(0f, 5f)
+        val safeSpeed = playbackSpeed.coerceIn(0.5f, 2.0f)
+
+        if (trimStartMs != null || trimEndMs != null || safeVolume > 1.0f || fadeInMs > 0L || fadeOutMs > 0L || safeSpeed != 1.0f) {
+            playWithMediaPlayer(id, path, safeVolume, isLooping, trimStartMs, trimEndMs, fadeInMs, fadeOutMs, safeSpeed)
             return
         }
 
@@ -57,32 +74,46 @@ class AudioEngine(private val context: Context) {
         
         val soundId = soundMap[path]
         if (soundId != null) {
-            val streamId = soundPool.play(soundId, volume, volume, 1, loopMode, 1f)
+            val streamId = soundPool.play(soundId, safeVolume, safeVolume, 1, loopMode, 1f)
             if (isLooping && streamId != 0) {
                 activeStreams[id] = streamId
             }
         } else {
             // Try loading it on the fly if not loaded yet
-            if (File(path).exists()) {
+            try {
                 val newId = soundPool.load(path, 1)
                 soundMap[path] = newId
                 soundPool.setOnLoadCompleteListener { pool, sampleId, status ->
                     if (status == 0 && sampleId == newId) {
-                        val streamId = pool.play(sampleId, volume, volume, 1, loopMode, 1f)
+                        val streamId = pool.play(sampleId, safeVolume, safeVolume, 1, loopMode, 1f)
                         if (isLooping && streamId != 0) {
                             activeStreams[id] = streamId
                         }
                     }
                 }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }
 
-    private fun playWithMediaPlayer(id: Int, path: String, volume: Float, isLooping: Boolean, startMs: Long?, endMs: Long?) {
+    private fun playWithMediaPlayer(
+        id: Int, 
+        path: String, 
+        volume: Float, 
+        isLooping: Boolean, 
+        startMs: Long?, 
+        endMs: Long?, 
+        fadeInMs: Long, 
+        fadeOutMs: Long,
+        playbackSpeed: Float = 1.0f
+    ) {
+        var mp: MediaPlayer? = null
         try {
-            if (!File(path).exists()) return
+            val file = File(path)
+            if (!file.exists() || !file.isFile || !file.canRead()) return
             
-            val mp = MediaPlayer()
+            mp = MediaPlayer()
             mp.setDataSource(path)
             
             val audioAttributes = AudioAttributes.Builder()
@@ -91,8 +122,11 @@ class AudioEngine(private val context: Context) {
                 .build()
             mp.setAudioAttributes(audioAttributes)
             
+            val targetMpVolume = if (volume > 1.0f) 1.0f else volume
+            val initialMpVolume = if (fadeInMs > 0L) 0f else targetMpVolume
+            
             if (volume > 1.0f) {
-                mp.setVolume(1.0f, 1.0f)
+                mp.setVolume(initialMpVolume, initialMpVolume)
                 try {
                     val enhancer = LoudnessEnhancer(mp.audioSessionId)
                     val gainmB = (Math.log10(volume.toDouble()) * 2000.0).toInt()
@@ -103,7 +137,7 @@ class AudioEngine(private val context: Context) {
                     e.printStackTrace()
                 }
             } else {
-                mp.setVolume(volume, volume)
+                mp.setVolume(initialMpVolume, initialMpVolume)
             }
             
             mp.prepare()
@@ -112,54 +146,148 @@ class AudioEngine(private val context: Context) {
             if (actualStartMs > 0) {
                 mp.seekTo(actualStartMs.toInt())
             }
+
+            val safeSpeed = playbackSpeed.coerceIn(0.5f, 2.0f)
+            try {
+                mp.playbackParams = PlaybackParams().setSpeed(safeSpeed)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
             
+            val audioTrackDurationMs = if (endMs != null) (endMs - actualStartMs) else (mp.duration - actualStartMs).toLong()
+            val durationToPlay = (audioTrackDurationMs / safeSpeed).toLong()
+            
+            val animators = mutableListOf<android.animation.ValueAnimator>()
+            if (fadeInMs > 0L) {
+                val fadeIn = android.animation.ValueAnimator.ofFloat(0f, targetMpVolume).apply {
+                    duration = fadeInMs
+                    addUpdateListener {
+                        val v = it.animatedValue as Float
+                        if (activeMediaPlayers[id] == mp) {
+                            mp.setVolume(v, v)
+                        }
+                    }
+                }
+                animators.add(fadeIn)
+            }
+            
+            // For loops, we re-trigger fade-in and fade-out on each loop
             if (isLooping) {
-                if (endMs != null) {
-                    val durationToPlay = endMs - actualStartMs
-                    if (durationToPlay > 0) {
+                if (endMs != null || fadeOutMs > 0L) {
+                    val actualLoopDuration = if (endMs != null) durationToPlay else (mp.duration.toLong() / safeSpeed).toLong()
+                    if (actualLoopDuration > 0) {
                         val loopRunnable = object : Runnable {
                             override fun run() {
                                 if (activeMediaPlayers[id] == mp) {
                                     mp.seekTo(actualStartMs.toInt())
                                     mp.start()
-                                    handler.postDelayed(this, durationToPlay)
+                                    if (fadeInMs > 0L) animators.forEach { if(it.duration == fadeInMs) it.start() }
+                                    
+                                    if (fadeOutMs > 0L && actualLoopDuration > fadeOutMs) {
+                                        val fadeOut = android.animation.ValueAnimator.ofFloat(targetMpVolume, 0f).apply {
+                                            duration = fadeOutMs
+                                            addUpdateListener {
+                                                val v = it.animatedValue as Float
+                                                if (activeMediaPlayers[id] == mp) {
+                                                    mp.setVolume(v, v)
+                                                }
+                                            }
+                                        }
+                                        val runOut = Runnable { if (activeMediaPlayers[id] == mp) fadeOut.start() }
+                                        handler.postDelayed(runOut, actualLoopDuration - fadeOutMs)
+                                        fadeOutRunnables[id] = runOut
+                                        animators.add(fadeOut)
+                                    }
+                                    
+                                    handler.postDelayed(this, actualLoopDuration)
                                 }
                             }
                         }
                         mp.start()
-                        handler.postDelayed(loopRunnable, durationToPlay)
+                        if (fadeInMs > 0L) animators.forEach { it.start() }
+                        
+                        if (fadeOutMs > 0L && actualLoopDuration > fadeOutMs) {
+                            val fadeOut = android.animation.ValueAnimator.ofFloat(targetMpVolume, 0f).apply {
+                                duration = fadeOutMs
+                                addUpdateListener {
+                                    val v = it.animatedValue as Float
+                                    if (activeMediaPlayers[id] == mp) {
+                                        mp.setVolume(v, v)
+                                    }
+                                }
+                            }
+                            val runOut = Runnable { if (activeMediaPlayers[id] == mp) fadeOut.start() }
+                            handler.postDelayed(runOut, actualLoopDuration - fadeOutMs)
+                            fadeOutRunnables[id] = runOut
+                            animators.add(fadeOut)
+                        }
+                        
+                        handler.postDelayed(loopRunnable, actualLoopDuration)
                         stopRunnables[id] = loopRunnable
                     }
                 } else {
                     mp.isLooping = true
                     mp.start()
+                    if (fadeInMs > 0L) animators.forEach { it.start() }
                 }
             } else {
-                if (endMs != null) {
-                    val durationToPlay = endMs - actualStartMs
-                    if (durationToPlay > 0) {
+                if (endMs != null || fadeOutMs > 0L) {
+                    val actualStopDuration = if (endMs != null) durationToPlay else ((mp.duration.toLong() - actualStartMs) / safeSpeed).toLong()
+                    if (actualStopDuration > 0) {
                         val stopRunnable = Runnable {
                             if (activeMediaPlayers[id] == mp) {
                                 mp.stop()
                                 mp.release()
                                 activeMediaPlayers.remove(id)
                                 stopRunnables.remove(id)
+                                fadeOutRunnables.remove(id)
+                                activeAnimators.remove(id)
                             }
                         }
-                        handler.postDelayed(stopRunnable, durationToPlay)
+                        handler.postDelayed(stopRunnable, actualStopDuration)
                         stopRunnables[id] = stopRunnable
+                        
+                        if (fadeOutMs > 0L && actualStopDuration > fadeOutMs) {
+                            val fadeOut = android.animation.ValueAnimator.ofFloat(targetMpVolume, 0f).apply {
+                                duration = fadeOutMs
+                                addUpdateListener {
+                                    val v = it.animatedValue as Float
+                                    if (activeMediaPlayers[id] == mp) {
+                                        mp.setVolume(v, v)
+                                    }
+                                }
+                            }
+                            val runOut = Runnable { if (activeMediaPlayers[id] == mp) fadeOut.start() }
+                            handler.postDelayed(runOut, actualStopDuration - fadeOutMs)
+                            fadeOutRunnables[id] = runOut
+                            animators.add(fadeOut)
+                        }
                     }
                 }
                 mp.setOnCompletionListener {
                     it.release()
                     activeMediaPlayers.remove(id)
+                    stopRunnables.remove(id)
+                    fadeOutRunnables.remove(id)
+                    activeAnimators.remove(id)
                 }
                 mp.start()
+                if (fadeInMs > 0L) animators.forEach { it.start() }
             }
             
             activeMediaPlayers[id] = mp
+            if (animators.isNotEmpty()) {
+                activeAnimators[id] = animators
+            }
         } catch (e: Exception) {
             e.printStackTrace()
+            try {
+                mp?.release()
+            } catch (ex: Exception) {
+                ex.printStackTrace()
+            }
+            activeMediaPlayers.remove(id)
+            activeEnhancers.remove(id)?.release()
         }
     }
 
@@ -193,6 +321,14 @@ class AudioEngine(private val context: Context) {
         if (runnable != null) {
             handler.removeCallbacks(runnable)
         }
+        
+        val fadeOutRunnable = fadeOutRunnables.remove(id)
+        if (fadeOutRunnable != null) {
+            handler.removeCallbacks(fadeOutRunnable)
+        }
+        
+        val animators = activeAnimators.remove(id)
+        animators?.forEach { it.cancel() }
     }
     
     fun isLoopingActive(id: Int): Boolean {
@@ -226,5 +362,11 @@ class AudioEngine(private val context: Context) {
         
         stopRunnables.values.forEach { handler.removeCallbacks(it) }
         stopRunnables.clear()
+        
+        fadeOutRunnables.values.forEach { handler.removeCallbacks(it) }
+        fadeOutRunnables.clear()
+        
+        activeAnimators.values.forEach { animators -> animators.forEach { it.cancel() } }
+        activeAnimators.clear()
     }
 }

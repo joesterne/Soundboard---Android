@@ -13,8 +13,11 @@ data class SoundTile(
     val isLooping: Boolean = false,
     val trimStartMs: Long? = null,
     val trimEndMs: Long? = null,
+    val fadeInMs: Long = 0L,
+    val fadeOutMs: Long = 0L,
     val playCount: Int = 0,
-    val category: String = ""
+    val category: String = "",
+    val playbackSpeed: Float = 1.0f
 )
 
 @Entity(tableName = "settings")
@@ -37,5 +40,8 @@ data class FavoriteTile(
     val volume: Float = 1.0f,
     val isLooping: Boolean = false,
     val trimStartMs: Long? = null,
-    val trimEndMs: Long? = null
+    val trimEndMs: Long? = null,
+    val fadeInMs: Long = 0L,
+    val fadeOutMs: Long = 0L,
+    val playbackSpeed: Float = 1.0f
 )

@@ -27,7 +27,7 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
     private val db = androidx.room.Room.databaseBuilder(
         application,
         AppDatabase::class.java, "soundboard-db"
-    ).fallbackToDestructiveMigration().build()
+    ).fallbackToDestructiveMigration(true).build()
     private val repository = SoundboardRepository(db.soundboardDao())
     
     val audioEngine = AudioEngine(application)
@@ -56,6 +56,13 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
     val isRecording = MutableStateFlow(false)
     val currentlyEditingTile = MutableStateFlow<SoundTile?>(null)
     
+    private val _toastMessage = MutableStateFlow<String?>(null)
+    val toastMessage: StateFlow<String?> = _toastMessage
+
+    fun clearToastMessage() {
+        _toastMessage.value = null
+    }
+
     private val _playHistory = MutableStateFlow<List<SoundTile>>(emptyList())
     val playHistory: StateFlow<List<SoundTile>> = _playHistory
 
@@ -80,37 +87,42 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
 
     fun saveCurrentBoardAsPreset(name: String) {
         viewModelScope.launch {
-            val fileName = name.replace(" ", "_") + ".zip"
-            val file = File(presetsDir, fileName)
-            exportBoard(file)
-            loadPresets()
+            val safeName = ExportImportUtils.sanitizeFileName(name.replace(" ", "_")).removeSuffix(".zip")
+            if (safeName.isNotBlank()) {
+                val fileName = "$safeName.zip"
+                val file = File(presetsDir, fileName).canonicalFile
+                if (file.path.startsWith(presetsDir.canonicalPath + File.separator)) {
+                    exportBoard(file)
+                    loadPresets()
+                }
+            }
         }
     }
 
     fun loadPreset(preset: Preset) {
         viewModelScope.launch {
             val app = getApplication<Application>()
-            val data = ExportImportUtils.importFromZip(preset.file, app.filesDir)
-            if (data != null) {
-                repository.updateSettings(data.settings)
-                
-                val updatedTiles = data.tiles.map { t ->
-                    if (t.audioPath != null) {
-                        val originalFile = File(t.audioPath)
-                        val newFile = File(app.filesDir, originalFile.name)
-                        t.copy(audioPath = newFile.absolutePath)
-                    } else {
-                        t
-                    }
+            val canonicalPresetPath = preset.file.canonicalPath
+            val canonicalPresetsDirPath = presetsDir.canonicalPath
+            if (canonicalPresetPath.startsWith(canonicalPresetsDirPath + File.separator)) {
+                val data = ExportImportUtils.importFromZip(app, preset.file, app.filesDir)
+                if (data != null) {
+                    repository.updateSettings(data.settings)
+                    repository.updateTiles(data.tiles)
                 }
-                repository.updateTiles(updatedTiles)
             }
         }
     }
 
     fun deletePreset(preset: Preset) {
-        if (preset.file.exists()) {
-            preset.file.delete()
+        try {
+            val canonicalPresetPath = preset.file.canonicalPath
+            val canonicalPresetsDirPath = presetsDir.canonicalPath
+            if (canonicalPresetPath.startsWith(canonicalPresetsDirPath + File.separator) && preset.file.exists()) {
+                preset.file.delete()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
         loadPresets()
     }
@@ -129,7 +141,10 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
                     volume = favorite.volume * masterVol,
                     isLooping = favorite.isLooping,
                     trimStartMs = favorite.trimStartMs,
-                    trimEndMs = favorite.trimEndMs
+                    trimEndMs = favorite.trimEndMs,
+                    fadeInMs = favorite.fadeInMs,
+                    fadeOutMs = favorite.fadeOutMs,
+                    playbackSpeed = favorite.playbackSpeed
                 )
             }
         }
@@ -153,7 +168,10 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
                         volume = tile.volume,
                         isLooping = tile.isLooping,
                         trimStartMs = tile.trimStartMs,
-                        trimEndMs = tile.trimEndMs
+                        trimEndMs = tile.trimEndMs,
+                        fadeInMs = tile.fadeInMs,
+                        fadeOutMs = tile.fadeOutMs,
+                        playbackSpeed = tile.playbackSpeed
                     )
                     repository.addFavorite(newFav)
                 }
@@ -179,7 +197,10 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
                     volume = tile.volume * masterVol, 
                     isLooping = tile.isLooping,
                     trimStartMs = tile.trimStartMs,
-                    trimEndMs = tile.trimEndMs
+                    trimEndMs = tile.trimEndMs,
+                    fadeInMs = tile.fadeInMs,
+                    fadeOutMs = tile.fadeOutMs,
+                    playbackSpeed = tile.playbackSpeed
                 )
                 // Add to history (max 20 items)
                 val newHistory = _playHistory.value.toMutableList()
@@ -200,17 +221,22 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
 
     fun updateSettings(rows: Int, cols: Int, bgColor: Int, fontSizeSp: Float, masterVolume: Float) {
         viewModelScope.launch {
+            val safeRows = rows.coerceIn(2, 8)
+            val safeCols = cols.coerceIn(2, 8)
+            val safeFontSize = fontSizeSp.coerceIn(8f, 32f)
+            val safeVolume = masterVolume.coerceIn(0f, 1f)
+
             val current = settings.value
             repository.updateSettings(current.copy(
-                rows = rows, 
-                cols = cols, 
+                rows = safeRows, 
+                cols = safeCols, 
                 backgroundColor = bgColor, 
-                fontSizeSp = fontSizeSp,
-                masterVolume = masterVolume
+                fontSizeSp = safeFontSize,
+                masterVolume = safeVolume
             ))
             
             // Initialize missing tiles if grid size changed
-            val totalNeeded = rows * cols
+            val totalNeeded = safeRows * safeCols
             val currentTiles = tiles.value
             val currentCount = currentTiles.size
             if (currentCount < totalNeeded) {
@@ -230,24 +256,45 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
 
     fun updateBackgroundPhoto(uri: Uri?) {
         viewModelScope.launch {
+            val app = getApplication<Application>()
+            val current = settings.value
+            val oldPhotoPath = current.backgroundPhotoPath
+            if (oldPhotoPath != null) {
+                try {
+                    val oldFile = File(oldPhotoPath)
+                    if (oldFile.exists() && ExportImportUtils.isFileWithinAppStorage(app, oldFile)) {
+                        oldFile.delete()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
             if (uri == null) {
-                val current = settings.value
                 repository.updateSettings(current.copy(backgroundPhotoPath = null))
                 return@launch
             }
             
-            val app = getApplication<Application>()
             val file = File(app.filesDir, "background_${System.currentTimeMillis()}.jpg")
             try {
                 app.contentResolver.openInputStream(uri)?.use { input ->
                     file.outputStream().use { output ->
-                        input.copyTo(output)
+                        val buffer = ByteArray(8192)
+                        var totalBytes = 0L
+                        var read: Int
+                        while (input.read(buffer).also { read = it } != -1) {
+                            totalBytes += read
+                            if (totalBytes > 25 * 1024 * 1024L) { // Max 25 MB
+                                throw SecurityException("Background photo exceeds maximum allowed size")
+                            }
+                            output.write(buffer, 0, read)
+                        }
                     }
                 }
-                val current = settings.value
                 repository.updateSettings(current.copy(backgroundPhotoPath = file.absolutePath))
             } catch (e: Exception) {
                 e.printStackTrace()
+                if (file.exists()) file.delete()
             }
         }
     }
@@ -305,7 +352,10 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun startRecording(index: Int) {
-        val file = File(getApplication<Application>().filesDir, "rec_$index.mp4")
+        val app = getApplication<Application>()
+        val recordingsDir = File(app.filesDir, "recordings").apply { mkdirs() }
+        val safeIndex = index.coerceIn(0, 100)
+        val file = File(recordingsDir, "rec_${safeIndex}_${System.currentTimeMillis()}.mp4")
         audioRecorder.startRecording(file)
         isRecording.value = true
     }
@@ -314,6 +364,18 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
         val path = audioRecorder.stopRecording()
         isRecording.value = false
         if (path != null) {
+            val app = getApplication<Application>()
+            // Clean up previous audio file if it was a recorded file
+            tile.audioPath?.let { oldPath ->
+                try {
+                    val oldFile = File(oldPath)
+                    if (oldFile.exists() && ExportImportUtils.isFileWithinAppStorage(app, oldFile)) {
+                        oldFile.delete()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
             val updatedTile = tile.copy(audioPath = path)
             currentlyEditingTile.value = updatedTile
         }
@@ -322,71 +384,159 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
     fun importAudioFromUri(tile: SoundTile, uri: Uri) {
         viewModelScope.launch {
             val app = getApplication<Application>()
-            val file = File(app.filesDir, "imported_${tile.index}_${System.currentTimeMillis()}.mp3")
+            val safeIndex = tile.index.coerceIn(0, 100)
+            val file = File(app.filesDir, "imported_${safeIndex}_${System.currentTimeMillis()}.mp3")
             try {
                 app.contentResolver.openInputStream(uri)?.use { input ->
                     file.outputStream().use { output ->
-                        input.copyTo(output)
+                        val buffer = ByteArray(8192)
+                        var totalBytes = 0L
+                        var read: Int
+                        while (input.read(buffer).also { read = it } != -1) {
+                            totalBytes += read
+                            if (totalBytes > 50 * 1024 * 1024L) { // Max 50 MB
+                                throw SecurityException("Imported audio file exceeds 50MB limit")
+                            }
+                            output.write(buffer, 0, read)
+                        }
                     }
                 }
+                
+                // Remove previous local file if it existed
+                tile.audioPath?.let { oldPath ->
+                    try {
+                        val oldFile = File(oldPath)
+                        if (oldFile.exists() && ExportImportUtils.isFileWithinAppStorage(app, oldFile)) {
+                            oldFile.delete()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+                
                 val updatedTile = tile.copy(audioPath = file.absolutePath)
                 currentlyEditingTile.value = updatedTile
             } catch (e: Exception) {
                 e.printStackTrace()
+                if (file.exists()) file.delete()
             }
         }
     }
 
     fun importMultipleAudioFiles(uris: List<Uri>) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
             val app = getApplication<Application>()
+            val currentSettings = settings.value
+            val currentGridCapacity = currentSettings.rows * currentSettings.cols
             
-            // Find empty tiles
-            val allCurrentTiles = tiles.value.sortedBy { it.index }
-            val emptyTiles = allCurrentTiles.filter { it.audioPath == null }
-            
-            if (emptyTiles.isEmpty() || uris.isEmpty()) return@launch
+            // Current visible tiles sorted by index
+            var allCurrentTiles = tiles.value.sortedBy { it.index }
+            var emptyTiles = allCurrentTiles.filter { it.index < currentGridCapacity && it.audioPath == null }
+
+            // If we have more URIs than empty tiles, and grid can expand, expand the grid
+            val neededExtra = uris.size - emptyTiles.size
+            if (neededExtra > 0) {
+                var newRows = currentSettings.rows
+                var newCols = currentSettings.cols
+                while ((newRows * newCols - (currentGridCapacity - emptyTiles.size)) < uris.size && (newRows < 8 || newCols < 8)) {
+                    if (newRows <= newCols && newRows < 8) {
+                        newRows++
+                    } else if (newCols < 8) {
+                        newCols++
+                    } else {
+                        break
+                    }
+                }
+
+                if (newRows != currentSettings.rows || newCols != currentSettings.cols) {
+                    val expandedCapacity = newRows * newCols
+                    repository.updateSettings(currentSettings.copy(rows = newRows, cols = newCols))
+                    // Ensure tiles exist up to expandedCapacity
+                    if (allCurrentTiles.size < expandedCapacity) {
+                        val additional = (allCurrentTiles.size until expandedCapacity).map { idx ->
+                            SoundTile(
+                                index = idx,
+                                name = "Tile ${idx + 1}",
+                                color = 0xFF424242.toInt(),
+                                audioPath = null,
+                                volume = 1.0f
+                            )
+                        }
+                        repository.updateTiles(additional)
+                        allCurrentTiles = (allCurrentTiles + additional).sortedBy { it.index }
+                    }
+                    emptyTiles = allCurrentTiles.filter { it.index < expandedCapacity && it.audioPath == null }
+                }
+            }
+
+            if (emptyTiles.isEmpty()) {
+                _toastMessage.value = "No empty tiles available for import"
+                return@launch
+            }
 
             val tilesToUpdate = mutableListOf<SoundTile>()
             val maxImports = minOf(uris.size, emptyTiles.size)
+            var successCount = 0
             
             for (i in 0 until maxImports) {
                 val uri = uris[i]
                 val tile = emptyTiles[i]
-                val file = File(app.filesDir, "bulk_imported_${tile.index}_${System.currentTimeMillis()}.mp3")
+                val file = File(app.filesDir, "bulk_imported_${tile.index}_${System.currentTimeMillis()}_$i.mp3")
                 
                 try {
                     // Try to get filename for tile name
-                    var fileName = "Imported"
+                    var fileName = "Sound ${tile.index + 1}"
                     app.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                         if (cursor.moveToFirst()) {
                             val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                             if (nameIndex != -1) {
-                                fileName = cursor.getString(nameIndex).substringBeforeLast('.')
+                                val rawName = cursor.getString(nameIndex)
+                                if (!rawName.isNullOrBlank()) {
+                                    val cleaned = ExportImportUtils.sanitizeFileName(rawName.substringBeforeLast('.'))
+                                    if (cleaned.isNotBlank()) {
+                                        fileName = cleaned
+                                    }
+                                }
                             }
                         }
                     }
 
                     app.contentResolver.openInputStream(uri)?.use { input ->
                         file.outputStream().use { output ->
-                            input.copyTo(output)
+                            val buffer = ByteArray(8192)
+                            var totalBytes = 0L
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                totalBytes += read
+                                if (totalBytes > 50 * 1024 * 1024L) { // Max 50 MB
+                                    throw SecurityException("Audio file exceeds 50MB limit")
+                                }
+                                output.write(buffer, 0, read)
+                            }
                         }
                     }
-                    // Select a random bright color for the newly imported tile
+                    // Select a distinct bright color for the newly imported tile
                     val newColor = listOf(
                         0xFFF44336.toInt(), 0xFFE91E63.toInt(), 0xFF9C27B0.toInt(),
                         0xFF3F51B5.toInt(), 0xFF2196F3.toInt(), 0xFF00BCD4.toInt(),
-                        0xFF4CAF50.toInt(), 0xFFFFC107.toInt(), 0xFFFF5722.toInt()
-                    ).random()
+                        0xFF4CAF50.toInt(), 0xFFFFC107.toInt(), 0xFFFF5722.toInt(),
+                        0xFF009688.toInt(), 0xFF673AB7.toInt()
+                    )[i % 11]
 
-                    tilesToUpdate.add(tile.copy(audioPath = file.absolutePath, name = fileName, color = newColor))
+                    tilesToUpdate.add(tile.copy(audioPath = file.absolutePath, name = fileName.take(25), color = newColor))
+                    successCount++
                 } catch (e: Exception) {
                     e.printStackTrace()
+                    if (file.exists()) file.delete()
                 }
             }
             
             if (tilesToUpdate.isNotEmpty()) {
                 repository.updateTiles(tilesToUpdate)
+                _toastMessage.value = "Imported $successCount sound${if (successCount > 1) "s" else ""} into grid"
+            } else {
+                _toastMessage.value = "Failed to import selected sounds"
             }
         }
     }
@@ -401,18 +551,7 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
             val data = ExportImportUtils.importFromZip(app, uri, app.filesDir)
             if (data != null) {
                 repository.updateSettings(data.settings)
-                
-                // Fix paths to point to new local files
-                val updatedTiles = data.tiles.map { t ->
-                    if (t.audioPath != null) {
-                        val originalFile = File(t.audioPath)
-                        val newFile = File(app.filesDir, originalFile.name)
-                        t.copy(audioPath = newFile.absolutePath)
-                    } else {
-                        t
-                    }
-                }
-                repository.updateTiles(updatedTiles)
+                repository.updateTiles(data.tiles)
             }
         }
     }
