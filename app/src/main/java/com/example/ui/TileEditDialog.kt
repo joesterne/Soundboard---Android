@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestartAlt
@@ -69,7 +70,8 @@ fun TileEditDialog(
     onToggleFavorite: () -> Unit,
     onRecordStart: () -> Unit,
     onRecordStop: () -> Unit,
-    onImportAudio: (Uri) -> Unit
+    onImportAudio: (Uri) -> Unit,
+    onGenerateAudio: () -> Unit = {}
 ) {
     var name by remember { mutableStateOf(tile.name) }
     var color by remember { mutableIntStateOf(tile.color) }
@@ -284,14 +286,26 @@ fun TileEditDialog(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(
                         onClick = { audioPicker.launch("audio/*") },
-                        modifier = Modifier.testTag("pick_audio_button")
+                        modifier = Modifier.weight(1f).testTag("pick_audio_button")
                     ) {
                         Text("Pick Audio")
+                    }
+
+                    FilledTonalButton(
+                        onClick = onGenerateAudio,
+                        modifier = Modifier.weight(1f).testTag("generate_ai_sound_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.AutoAwesome,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp).padding(end = 4.dp)
+                        )
+                        Text("AI Sound")
                     }
                     
                     IconButton(

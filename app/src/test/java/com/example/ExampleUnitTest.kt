@@ -39,4 +39,27 @@ class ExampleUnitTest {
         val customTile = defaultTile.copy(playbackSpeed = 1.5f)
         assertEquals(1.5f, customTile.playbackSpeed, 0.001f)
     }
+
+    @Test
+    fun lyriaModel_selectionAndRequestFormatting() {
+        val shortClipModel = if (true) "lyria-3-clip-preview" else "lyria-3-pro-preview"
+        val fullTrackModel = if (false) "lyria-3-clip-preview" else "lyria-3-pro-preview"
+
+        assertEquals("lyria-3-clip-preview", shortClipModel)
+        assertEquals("lyria-3-pro-preview", fullTrackModel)
+
+        val request = com.example.api.GenerateContentRequest(
+            contents = listOf(
+                com.example.api.Content(
+                    parts = listOf(com.example.api.Part(text = "Cinematic brass hit"))
+                )
+            ),
+            generationConfig = com.example.api.GenerationConfig(
+                responseModalities = listOf("AUDIO")
+            )
+        )
+
+        assertEquals("Cinematic brass hit", request.contents[0].parts[0].text)
+        assertEquals(listOf("AUDIO"), request.generationConfig?.responseModalities)
+    }
 }

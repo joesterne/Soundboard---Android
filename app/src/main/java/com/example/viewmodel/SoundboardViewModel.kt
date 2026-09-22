@@ -423,6 +423,100 @@ class SoundboardViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun assignGeneratedAudio(tile: SoundTile, generatedFile: File, suggestedName: String? = null) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            // Clean up old audio file if it was within app storage
+            tile.audioPath?.let { oldPath ->
+                try {
+                    val oldFile = File(oldPath)
+                    if (oldFile.exists() && ExportImportUtils.isFileWithinAppStorage(app, oldFile)) {
+                        oldFile.delete()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            val updatedTile = tile.copy(
+                audioPath = generatedFile.absolutePath,
+                name = if (suggestNameOrKeep(tile.name, suggestedName)) suggestedName ?: tile.name else tile.name
+            )
+            currentlyEditingTile.value = updatedTile
+            repository.updateTile(updatedTile)
+            _toastMessage.value = "Assigned generated sound to Tile ${tile.index + 1}!"
+        }
+    }
+
+    /**
+     * Assigns a newly generated audio file to the next available empty tile.
+     * If no tiles are empty, automatically expands the grid to accommodate it.
+     */
+    fun addGeneratedAudioToNextAvailableTile(generatedFile: File, suggestedName: String? = null) {
+        viewModelScope.launch {
+            var currentTiles = tiles.value
+            var emptyTile = currentTiles.firstOrNull { it.audioPath == null }
+
+            if (emptyTile == null) {
+                // Auto-expand grid
+                val currentSettings = settings.value
+                var rows = currentSettings.rows
+                var cols = currentSettings.cols
+                if (cols < 8) {
+                    cols++
+                } else if (rows < 8) {
+                    rows++
+                } else {
+                    _toastMessage.value = "Soundboard is full (8x8 limit reached)"
+                    return@launch
+                }
+
+                repository.updateSettings(currentSettings.copy(rows = rows, cols = cols))
+                val totalNeeded = rows * cols
+                val newTilesList = currentTiles.toMutableList()
+                val currentCount = newTilesList.size
+                for (idx in currentCount until totalNeeded) {
+                    newTilesList.add(
+                        SoundTile(
+                            index = idx,
+                            name = "Tile ${idx + 1}",
+                            color = 0xFF424242.toInt(),
+                            audioPath = null,
+                            volume = 1.0f
+                        )
+                    )
+                }
+                repository.replaceTiles(newTilesList)
+                currentTiles = newTilesList
+                emptyTile = currentTiles.firstOrNull { it.audioPath == null }
+            }
+
+            if (emptyTile != null) {
+                val finalName = if (!suggestedName.isNullOrBlank()) suggestedName else "AI Sound"
+                // Pick a vibrant color
+                val vibrantColors = listOf(
+                    0xFFE91E63.toInt(), 0xFF9C27B0.toInt(), 0xFF3F51B5.toInt(),
+                    0xFF2196F3.toInt(), 0xFF00BCD4.toInt(), 0xFF4CAF50.toInt(),
+                    0xFFFF9800.toInt(), 0xFFFF5722.toInt()
+                )
+                val assignedColor = vibrantColors[emptyTile.index % vibrantColors.size]
+                val updatedTile = emptyTile.copy(
+                    audioPath = generatedFile.absolutePath,
+                    name = finalName,
+                    color = assignedColor
+                )
+                repository.updateTile(updatedTile)
+                _toastMessage.value = "Saved \"$finalName\" to Tile ${emptyTile.index + 1}!"
+            }
+        }
+    }
+
+    private fun suggestNameOrKeep(currentName: String, suggested: String?): Boolean {
+        if (suggested.isNullOrBlank()) return false
+        // If current name is just a generic "Tile X", replace it with the prompt-based name
+        return currentName.startsWith("Tile ") || currentName.isBlank()
+    }
+
     fun importMultipleAudioFiles(uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch {

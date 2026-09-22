@@ -68,6 +68,8 @@ fun MainScreen(viewModel: SoundboardViewModel) {
     var showPresetsSheet by remember { mutableStateOf(false) }
     var showWebSearch by remember { mutableStateOf(false) }
     var showFavoritesSheet by remember { mutableStateOf(false) }
+    var showGenerateSoundDialog by remember { mutableStateOf(false) }
+    var targetTileForGeneration by remember { mutableStateOf<SoundTile?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val view = LocalView.current
 
@@ -122,6 +124,17 @@ fun MainScreen(viewModel: SoundboardViewModel) {
                 )
                 HorizontalDivider()
                 
+                NavigationDrawerItem(
+                    label = { Text("Generate Sounds with AI") },
+                    icon = { Icon(Icons.Filled.AutoAwesome, null) },
+                    selected = false,
+                    onClick = {
+                        coroutineScope.launch { drawerState.close() }
+                        targetTileForGeneration = null
+                        showGenerateSoundDialog = true
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
                 NavigationDrawerItem(
                     label = { Text("Bulk Import Local Sounds") },
                     icon = { Icon(Icons.Filled.LibraryMusic, null) },
@@ -237,6 +250,14 @@ fun MainScreen(viewModel: SoundboardViewModel) {
                     },
                     actions = {
                         IconButton(
+                            onClick = {
+                                targetTileForGeneration = null
+                                showGenerateSoundDialog = true
+                            }
+                        ) {
+                            Icon(Icons.Filled.AutoAwesome, contentDescription = "Generate Sounds with AI")
+                        }
+                        IconButton(
                             onClick = { bulkImportLauncher.launch("audio/*") }
                         ) {
                             Icon(Icons.Filled.LibraryAdd, contentDescription = "Batch Import Sounds")
@@ -331,6 +352,26 @@ fun MainScreen(viewModel: SoundboardViewModel) {
     if (showWebSearch) {
         WebSearchDialog(
             onDismiss = { showWebSearch = false }
+        )
+    }
+
+    if (showGenerateSoundDialog) {
+        GenerateSoundDialog(
+            targetTileIndex = targetTileForGeneration?.index,
+            onDismiss = {
+                showGenerateSoundDialog = false
+                targetTileForGeneration = null
+            },
+            onSoundGenerated = { generatedFile, suggestedName, _ ->
+                val targetTile = targetTileForGeneration
+                if (targetTile != null) {
+                    viewModel.assignGeneratedAudio(targetTile, generatedFile, suggestedName)
+                } else {
+                    viewModel.addGeneratedAudioToNextAvailableTile(generatedFile, suggestedName)
+                }
+                showGenerateSoundDialog = false
+                targetTileForGeneration = null
+            }
         )
     }
 
@@ -541,7 +582,11 @@ fun MainScreen(viewModel: SoundboardViewModel) {
             onToggleFavorite = { viewModel.toggleFavorite(tile) },
             onRecordStart = { viewModel.startRecording(tile.index) },
             onRecordStop = { viewModel.stopRecording(tile) },
-            onImportAudio = { uri -> viewModel.importAudioFromUri(tile, uri) }
+            onImportAudio = { uri -> viewModel.importAudioFromUri(tile, uri) },
+            onGenerateAudio = {
+                targetTileForGeneration = tile
+                showGenerateSoundDialog = true
+            }
         )
     }
 }
